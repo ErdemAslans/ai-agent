@@ -1,0 +1,105 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai_agent_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_agent_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_agent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai_agent_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  django:
+    build: .
+    container_name: ai_agent_django
+    # NOTE: makemigrations on startup is for dev convenience.
+    # In production: generate migrations in dev, commit them, run only `migrate`.
+    command:
+      - sh
+      - -c
+      - >
+        python manage.py makemigrations --noinput &&
+        python manage.py migrate --noinput &&
+        gunicorn ai_agent.wsgi:application --bind 0.0.0.0:8000 --workers 3 --reload --access-logfile - --error-logfile -
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-only-secret-change-me}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_agent_dev_password}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      WORKSPACE_ROOT: /workspaces
+      REPOSITORY_ALLOWLIST: ${REPOSITORY_ALLOWLIST:-}
+    volumes:
+      - .:/app
+      - workspaces:/workspaces
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: ai_agent_worker
+    command: celery -A ai_agent worker -l info --concurrency=4
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-only-secret-change-me}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_agent_dev_password}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      WORKSPACE_ROOT: /workspaces
+      REPOSITORY_ALLOWLIST: ${REPOSITORY_ALLOWLIST:-}
+    volumes:
+      - .:/app
+      - workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  workspaces:

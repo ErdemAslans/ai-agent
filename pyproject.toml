@@ -1,0 +1,40 @@
+[project]
+name = "ai-agent"
+version = "0.1.0"
+description = "AI Development Agent — Task to Pull Request automation"
+requires-python = ">=3.12"
+dependencies = [
+    "Django>=5.0,<6.0",
+    "djangorestframework>=3.14,<4.0",
+    "django-environ>=0.11",
+    "celery[redis]>=5.3,<6.0",
+    "redis>=5.0,<6.0",
+    "psycopg2-binary>=2.9",
+    "google-genai>=0.3",
+    "GitPython>=3.1",
+    "PyGithub>=2.1",
+    "docker>=7.0",
+    "structlog>=24.0",
+    "pydantic>=2.5",
+    "gunicorn>=22.0,<23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-django>=4.7",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "ai_agent.settings"
+python_files = ["test_*.py", "*_test.py", "tests.py"]
