@@ -55,9 +55,9 @@ def create_task(request: Request) -> Response:
             status=status.HTTP_409_CONFLICT,
         )
 
-    # TODO Day 2: Enqueue Celery pipeline
-    # from apps.pipeline.orchestrator import orchestrate
-    # orchestrate.delay(str(task.id), trace_id)
+    # Enqueue Celery pipeline
+    from apps.pipeline.orchestrator import orchestrate
+    orchestrate.delay(str(task.id), trace_id)
 
     log.info("task.queued", task_id=task.task_id, trace_id=trace_id)
 
