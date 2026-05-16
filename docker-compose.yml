@@ -74,6 +74,8 @@ services:
     build: .
     container_name: ai_agent_worker
     command: celery -A ai_agent worker -l info --concurrency=4
+    healthcheck:
+      disable: true
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-only-secret-change-me}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-false}

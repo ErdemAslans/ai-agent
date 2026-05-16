@@ -64,7 +64,10 @@ class CodeWriterOutput(AgentOutput):
 class CodeWriterAgent:
     name = "code_writer"
 
-    def __init__(self, llm: LLMProvider, model: str = "gemini-2.5-pro"):
+    def __init__(self, llm: LLMProvider, model: str = "gemini-2.5-flash"):
+        # Note: gemini-2.5-pro requires paid tier. Flash is free tier and
+        # sufficient for the email-validation acceptance criteria. Production
+        # deployments can switch to pro via this constructor.
         self.llm = llm
         self.model = model
 

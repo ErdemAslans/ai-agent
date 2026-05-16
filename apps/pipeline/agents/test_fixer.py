@@ -29,7 +29,7 @@ class TestFixerAgent:
 
     name = "test_fixer"
 
-    def __init__(self, llm=None, model: str = "gemini-2.5-pro"):
+    def __init__(self, llm=None, model: str = "gemini-2.5-flash"):
         self.llm = llm
         self.model = model
 
