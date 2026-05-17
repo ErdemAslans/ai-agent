@@ -54,6 +54,9 @@ COPY --chown=app:app . .
 
 USER app
 
+# pip --user installs land in ~/.local; expose binaries on PATH for TestRunner
+ENV PATH="/home/app/.local/bin:${PATH}"
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
