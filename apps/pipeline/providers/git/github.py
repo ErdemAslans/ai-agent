@@ -62,26 +62,50 @@ class GitHubProvider:
         return commit.hexsha
 
     def push_branch(self, repo_path: Path, branch_name: str) -> None:
+        """Push the branch to origin. Force on REJECTED — AI-agent branches
+        are only written by us, so overwriting a stale remote copy is safe.
+        """
         repo = GitRepo(repo_path)
         origin = repo.remote("origin")
-        # Ensure remote URL has token for push auth
         current_url = next(iter(origin.urls), None)
         if current_url:
             origin.set_url(self._with_token(current_url))
+
         push_results = origin.push(refspec=f"{branch_name}:{branch_name}")
+        needs_force = False
         for info in push_results:
+            if info.flags & (info.REJECTED | info.REMOTE_REJECTED):
+                needs_force = True
+                continue
             if info.flags & info.ERROR:
                 raise RuntimeError(f"git push failed: {info.summary}")
-        log.info("git.push.completed", branch=branch_name)
+
+        if needs_force:
+            log.warning(
+                "git.push.using_force",
+                branch=branch_name,
+                reason="remote diverged; AI-agent branch is force-overwritten",
+            )
+            push_results = origin.push(refspec=f"+{branch_name}:{branch_name}")
+            for info in push_results:
+                if info.flags & info.ERROR:
+                    raise RuntimeError(f"git push --force failed: {info.summary}")
+
+        log.info("git.push.completed", branch=branch_name, forced=needs_force)
 
     def diff(self, repo_path: Path) -> str:
+        """Return the diff of the working tree against HEAD.
+
+        Works pre-commit (uncommitted edits vs HEAD) and tolerates shallow
+        clones (depth=1) where HEAD~1 does not exist.
+        """
         repo = GitRepo(repo_path)
-        return repo.git.diff("HEAD~1", "HEAD") if repo.head.is_valid() else repo.git.diff()
+        return repo.git.diff("HEAD")
 
     def changed_files(self, repo_path: Path) -> list[str]:
         repo = GitRepo(repo_path)
         try:
-            return repo.git.diff("HEAD~1", "HEAD", "--name-only").splitlines()
+            return repo.git.diff("HEAD", "--name-only").splitlines()
         except Exception:
             return [item.a_path for item in repo.index.diff(None)] + repo.untracked_files
 
@@ -95,16 +119,35 @@ class GitHubProvider:
         title: str,
         body: str,
     ) -> PullRequestInfo:
+        """Open a PR. If one already exists for this branch, update it."""
+        from github import GithubException
+
         owner_repo = self._extract_owner_repo(repo_url)
         repo = self.api.get_repo(owner_repo)
-        pr = repo.create_pull(
-            title=title,
-            body=body,
-            head=head_branch,
-            base=base_branch,
-        )
-        log.info("git.pr.opened", url=pr.html_url, number=pr.number, repo=owner_repo)
-        return PullRequestInfo(url=pr.html_url, number=pr.number)
+        try:
+            pr = repo.create_pull(title=title, body=body, head=head_branch, base=base_branch)
+            log.info("git.pr.opened", url=pr.html_url, number=pr.number, repo=owner_repo)
+            return PullRequestInfo(url=pr.html_url, number=pr.number)
+        except GithubException as exc:
+            # 422 typically means "PR already exists for this head"
+            if exc.status != 422:
+                raise
+            owner = owner_repo.split("/")[0]
+            head_qualified = f"{owner}:{head_branch}"
+            existing = next(
+                iter(repo.get_pulls(state="open", head=head_qualified, base=base_branch)),
+                None,
+            )
+            if existing is None:
+                raise
+            existing.edit(title=title, body=body)
+            log.info(
+                "git.pr.updated",
+                url=existing.html_url,
+                number=existing.number,
+                repo=owner_repo,
+            )
+            return PullRequestInfo(url=existing.html_url, number=existing.number)
 
     # ---- Helpers ----
 
