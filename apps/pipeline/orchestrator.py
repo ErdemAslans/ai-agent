@@ -1,57 +1,65 @@
-"""Orchestrator Celery task — wires agents + providers + workspace + git.
+"""Orchestrator Celery task — wires agents + validators + providers.
 
-Pipeline:
-  1. Parse task description
-  2. Validate repository_url against allowlist
-  3. Create workspace + clone repo
-  4. Analyze repo (language, test cmd, relevant files)
-  5. Run CodeWriter (LLM)
-  6. Run tests (Day 3: real, Day 2: skipped)
-  7. Run TestFixer if failed (Day 3)
-  8. Generate PR title/body
-  9. Push branch + open PR (or dry-run)
- 10. Update ExecutionReport
+Pipeline (Day 3):
+  1.  Parse task description
+  2.  Check repo allowlist
+  3.  Create workspace + clone repo
+  4.  Analyze repo (language, test cmd, relevant files)
+  5.  Code Writer agent (Gemini)
+  6.  Pre-test validation pipeline (5 deterministic checks, parallel)
+  7.  Run tests; on failure run Test Fixer agent (max 2 retries)
+  8.  AI Self-Review against acceptance criteria
+  9.  PR Writer assembles the body
+ 10.  Either dry-run output OR commit/push/open PR
+ 11.  Update ExecutionReport
 """
-import fnmatch
 import time
 from datetime import datetime
 from pathlib import Path
 
+import fnmatch
 import structlog
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
 
-from apps.tasks.models import ExecutionReport, Task
+from apps.tasks.models import AgentRun, ExecutionReport, Task
 
 from .agents.code_writer import CodeWriterAgent, CodeWriterInput
 from .agents.pr_writer import PRWriterAgent, PRWriterInput
 from .agents.repo_analyzer import RepoAnalyzerAgent, RepoAnalyzerInput
 from .agents.task_parser import TaskParserAgent, TaskParserInput
-from .agents.test_fixer import TestFixerAgent
+from .agents.test_fixer import TestFixerAgent, TestFixerInput
 from .providers.git.github import GitHubProvider
 from .providers.llm.gemini import GeminiProvider
+from .validators.ai_self_review import AISelfReviewer
+from .validators.base import Severity, ValidationContext
+from .validators.diff_size import DiffSizeValidator
+from .validators.file_allowlist import FileAllowlistValidator
+from .validators.forbidden_pattern import ForbiddenPatternValidator
+from .validators.pipeline import ValidationPipeline, summarize
+from .validators.secret_scanner import SecretScanner
+from .validators.syntax import SyntaxValidator
+from .validators.test_runner import TestRunner
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
 
+MAX_TEST_RETRIES = 2
+
 
 def _check_repo_allowed(repo_url: str) -> None:
-    """Repository allowlist gate (PDF Section 6.1)."""
     allowlist = settings.REPOSITORY_ALLOWLIST
     if not allowlist:
-        log.warning("repo.allowlist.empty", repo_url=repo_url, note="dev mode — accepting all")
+        log.warning("repo.allowlist.empty", repo_url=repo_url, note="dev mode")
         return
     for pattern in allowlist:
         if fnmatch.fnmatch(repo_url, pattern) or fnmatch.fnmatch(repo_url, f"*{pattern}*"):
             return
-    raise PermissionError(
-        f"Repository '{repo_url}' is not in REPOSITORY_ALLOWLIST"
-    )
+    raise PermissionError(f"Repository '{repo_url}' is not in REPOSITORY_ALLOWLIST")
 
 
 def _build_file_tree(workspace: Path, max_entries: int = 200) -> list[str]:
-    """Flat list of file paths (relative), capped."""
     skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
                  "dist", "build", "target", "vendor"}
     entries: list[str] = []
@@ -67,22 +75,35 @@ def _build_file_tree(workspace: Path, max_entries: int = 200) -> list[str]:
     return entries
 
 
-def _append_timeline(report: ExecutionReport, step: str, duration_ms: int, status: str = "ok"):
+def _append_timeline(report: ExecutionReport, step: str, duration_ms: int,
+                     status: str = "ok") -> None:
     report.refresh_from_db()
-    report.timeline.append(
-        {
-            "step": step,
-            "at": datetime.utcnow().isoformat() + "Z",
-            "duration_ms": duration_ms,
-            "status": status,
-        }
-    )
+    report.timeline.append({
+        "step": step,
+        "at": datetime.utcnow().isoformat() + "Z",
+        "duration_ms": duration_ms,
+        "status": status,
+    })
     report.save(update_fields=["timeline"])
+
+
+def _save_validation_summary(report: ExecutionReport, name: str, result_dict: dict) -> None:
+    report.refresh_from_db()
+    report.validation_summary[name] = result_dict
+    report.save(update_fields=["validation_summary"])
+
+
+def _fail(task: Task, report: ExecutionReport, error: str) -> None:
+    report.error = error
+    report.status = ExecutionReport.Status.FAILED
+    report.completed_at = timezone.now()
+    report.save()
+    task.status = Task.Status.FAILED
+    task.save(update_fields=["status"])
 
 
 @shared_task(bind=True, name="apps.pipeline.orchestrator.orchestrate")
 def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
-    """Main pipeline entry. Called by POST /api/tasks view."""
     task = Task.objects.get(id=task_uuid)
     report = ExecutionReport.objects.get(trace_id=trace_id)
 
@@ -92,7 +113,6 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
     report.status = ExecutionReport.Status.RUNNING
     report.save(update_fields=["status"])
 
-    # Pre-init providers (fail fast if creds missing)
     try:
         llm = GeminiProvider(api_key=settings.GEMINI_API_KEY)
         git = GitHubProvider(token=settings.GITHUB_TOKEN)
@@ -102,15 +122,24 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         _fail(task, report, f"Configuration error: {exc}")
         raise
 
+    pipeline = ValidationPipeline(
+        deterministic_validators=[
+            FileAllowlistValidator(),
+            SyntaxValidator(),
+            SecretScanner(),
+            ForbiddenPatternValidator(),
+            DiffSizeValidator(),
+        ],
+        test_runner=TestRunner(),
+        ai_reviewer=AISelfReviewer(llm=llm),
+    )
+
     workspace_path: Path | None = None
-    llm_total_tokens = 0
-    llm_total_cost = 0.0
 
     try:
-        # ---- 1. Parse task ----
+        # ---- 1. Parse ----
         t0 = time.monotonic()
-        parser = TaskParserAgent()
-        parsed = parser.run(
+        parsed = TaskParserAgent().run(
             TaskParserInput(
                 raw_task_id=task.task_id,
                 raw_title=task.title,
@@ -120,14 +149,13 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         )
         _append_timeline(report, "task_parsed", int((time.monotonic() - t0) * 1000))
 
-        # Save parsed fields back to Task
         task.repository_url = parsed.repository_url
         task.base_branch = parsed.base_branch
         task.requirement = parsed.requirement
         task.acceptance_criteria = parsed.acceptance_criteria
         task.save()
 
-        # ---- 2. Repo allowlist ----
+        # ---- 2. Allowlist ----
         _check_repo_allowed(parsed.repository_url)
 
         # ---- 3. Workspace + clone ----
@@ -139,10 +167,9 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         git.clone(parsed.repository_url, parsed.base_branch, workspace_path)
         _append_timeline(report, "clone_completed", int((time.monotonic() - t0) * 1000))
 
-        # ---- 4. Analyze repo ----
+        # ---- 4. Analyze ----
         t0 = time.monotonic()
-        analyzer = RepoAnalyzerAgent()
-        analysis = analyzer.run(
+        analysis = RepoAnalyzerAgent().run(
             RepoAnalyzerInput(
                 workspace_path=str(workspace_path),
                 requirement=parsed.requirement,
@@ -159,14 +186,13 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         # ---- 5. CodeWriter ----
         t0 = time.monotonic()
         writer = CodeWriterAgent(llm=llm)
-        file_tree = _build_file_tree(workspace_path)
         code_out = writer.run(
             CodeWriterInput(
                 workspace_path=str(workspace_path),
                 requirement=parsed.requirement,
                 acceptance_criteria=parsed.acceptance_criteria,
                 relevant_files=analysis.relevant_files,
-                file_tree=file_tree,
+                file_tree=_build_file_tree(workspace_path),
                 language=analysis.language,
                 framework=analysis.framework,
             ),
@@ -174,19 +200,113 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         )
         _append_timeline(report, "code_changed", int((time.monotonic() - t0) * 1000))
 
-        # ---- 6. Tests (Day 2: skipped — Day 3 adds real test runner) ----
-        test_status = "skipped"
-        test_duration = 0
+        # ---- 5.5 Build validation context ----
+        diff_text = git.diff(workspace_path)
+        ctx = ValidationContext(
+            workspace_path=workspace_path,
+            allowlist=set(analysis.relevant_files),
+            requirement=parsed.requirement,
+            acceptance_criteria=parsed.acceptance_criteria,
+            changed_files=[f.path for f in code_out.files],
+            diff=diff_text,
+            test_command=analysis.test_command,
+            llm_provider=llm,
+        )
 
-        # ---- 7. TestFixer (Day 2: stub) ----
-        if test_status == "failed":
-            fixer = TestFixerAgent(llm=llm)
-            # Stub for now; Day 3 wires retry loop
-            _ = fixer
+        # ---- 6. Pre-test validation pipeline (parallel) ----
+        t0 = time.monotonic()
+        pre_results = pipeline.run_pre_test(ctx)
+        for r in pre_results:
+            _save_validation_summary(report, r.name, r.to_dict())
+        _append_timeline(
+            report,
+            "pre_test_validation",
+            int((time.monotonic() - t0) * 1000),
+            status="ok" if all(r.passed for r in pre_results) else "failed",
+        )
+        if not all(r.passed for r in pre_results):
+            blocking = [
+                i.message
+                for r in pre_results for i in r.issues
+                if i.severity == Severity.BLOCKER
+            ]
+            raise RuntimeError(
+                "Pre-test validation rejected the AI output:\n- " + "\n- ".join(blocking)
+            )
 
-        # ---- 8. PRWriter ----
-        # Aggregate LLM usage from this task's agent runs
-        from apps.tasks.models import AgentRun
+        # ---- 7. Tests + retry loop ----
+        t0 = time.monotonic()
+        test_result = pipeline.run_test(ctx)
+        retries = 0
+        while (
+            test_result is not None
+            and not test_result.passed
+            and retries < MAX_TEST_RETRIES
+        ):
+            failing_output = test_result.extra.get("test_output", "")
+            log.info(
+                "tests.retry",
+                attempt=retries + 1,
+                max=MAX_TEST_RETRIES,
+                output_chars=len(failing_output),
+            )
+
+            TestFixerAgent(llm=llm).run(
+                TestFixerInput(
+                    workspace_path=str(workspace_path),
+                    test_output=failing_output,
+                    last_changed_files=[f.path for f in code_out.files],
+                    allowlist=analysis.relevant_files,
+                    requirement=parsed.requirement,
+                ),
+                report=report,
+            )
+
+            # Refresh diff after the fix and re-run tests.
+            # changed_files stays the same — TestFixer enforces the same allowlist.
+            ctx.diff = git.diff(workspace_path)
+            test_result = pipeline.run_test(ctx)
+            retries += 1
+
+        if test_result is not None:
+            _save_validation_summary(report, test_result.name, test_result.to_dict())
+        _append_timeline(
+            report,
+            "tests_run",
+            int((time.monotonic() - t0) * 1000),
+            status=(
+                "ok" if (test_result is None or test_result.passed) else "failed_open"
+            ),
+        )
+
+        test_status = (
+            test_result.extra.get("test_status", "skipped") if test_result else "skipped"
+        )
+        test_duration = test_result.duration_ms if test_result else 0
+
+        # ---- 8. AI Self-Review (only if tests pass) ----
+        if test_result is not None and test_result.passed:
+            t0 = time.monotonic()
+            review_result = pipeline.run_post_test(ctx)
+            if review_result is not None:
+                _save_validation_summary(report, review_result.name, review_result.to_dict())
+                _append_timeline(
+                    report,
+                    "self_review",
+                    int((time.monotonic() - t0) * 1000),
+                    status="ok" if review_result.passed else "failed",
+                )
+                if not review_result.passed:
+                    blocking = [
+                        i.message
+                        for i in review_result.issues
+                        if i.severity == Severity.BLOCKER
+                    ]
+                    raise RuntimeError(
+                        "AI self-review rejected the diff:\n- " + "\n- ".join(blocking)
+                    )
+
+        # ---- 9. PR Writer ----
         usage_agg = AgentRun.objects.filter(report=report).values_list(
             "prompt_tokens", "completion_tokens", "estimated_cost_usd"
         )
@@ -209,17 +329,23 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
                 llm_model=writer.model,
                 llm_total_tokens=llm_total_tokens,
                 llm_total_cost_usd=llm_total_cost,
-                retries=0,
+                retries=retries,
                 trace_id=trace_id,
+                validation_summary=dict(report.validation_summary),
             ),
             report=report,
         )
         _append_timeline(report, "pr_drafted", int((time.monotonic() - t0) * 1000))
 
-        # ---- 9. Dry-run check ----
+        # Capture the final diff BEFORE committing — once commit happens the
+        # working tree matches HEAD and `git diff` returns empty.
+        final_diff = git.diff(workspace_path)
+        report.diff = final_diff
+        report.save(update_fields=["diff"])
+
+        # ---- 10. Dry run ----
         if task.dry_run:
             log.info("orchestrator.dry_run", task_id=task.task_id)
-            report.diff = git.diff(workspace_path)
             report.status = ExecutionReport.Status.DRY_RUN_COMPLETE
             report.completed_at = timezone.now()
             report.save()
@@ -227,7 +353,7 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
             task.save(update_fields=["status"])
             return {"status": "dry_run_complete", "trace_id": trace_id}
 
-        # ---- 10. Commit, push, open PR ----
+        # ---- 11. Commit + push + open PR ----
         t0 = time.monotonic()
         git.checkout_new_branch(workspace_path, pr_out.branch_name)
         git.commit_all(
@@ -252,9 +378,10 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         )
         _append_timeline(report, "pr_opened", int((time.monotonic() - t0) * 1000))
 
+        # ---- 12. Finalize report ----
         report.pr_url = pr_info.url
         report.branch_name = pr_out.branch_name
-        report.diff = git.diff(workspace_path)
+        # report.diff was captured before commit (working tree was dirty then)
         report.llm_usage = {
             "total_tokens": llm_total_tokens,
             "total_cost_usd": round(llm_total_cost, 6),
@@ -271,6 +398,7 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
             task_id=task.task_id,
             pr_url=pr_info.url,
             duration_total=sum(t["duration_ms"] for t in report.timeline),
+            retries=retries,
         )
         return {"status": "completed", "pr_url": pr_info.url, "trace_id": trace_id}
 
@@ -278,12 +406,3 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         log.exception("orchestrator.failed", task_id=task.task_id, error=str(exc))
         _fail(task, report, str(exc))
         raise
-
-
-def _fail(task: Task, report: ExecutionReport, error: str) -> None:
-    report.error = error
-    report.status = ExecutionReport.Status.FAILED
-    report.completed_at = timezone.now()
-    report.save()
-    task.status = Task.Status.FAILED
-    task.save(update_fields=["status"])
