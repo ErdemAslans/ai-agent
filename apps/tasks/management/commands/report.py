@@ -33,7 +33,7 @@ def _format_cost(c: Decimal | float) -> str:
     val = float(c)
     if val == 0:
         return "    $0.00   "
-    return f"${val:>9.6f}"
+    return f"${val:.6f}".rjust(11)
 
 
 def _format_duration_ms(ms: int) -> str:
