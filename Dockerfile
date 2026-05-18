@@ -30,6 +30,7 @@ RUN pip install --upgrade pip && \
     "structlog>=24.0" \
     "pydantic>=2.5" \
     "gunicorn>=22.0,<23.0" \
+    "langfuse>=2.50,<3.0" \
     "pytest>=7.4" \
     "pytest-django>=4.7"
 

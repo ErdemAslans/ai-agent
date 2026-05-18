@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import structlog
 
+from apps.pipeline.observability import langfuse_context, observe
 from apps.tasks.models import ExecutionReport
 
 from .base import AgentInput, AgentOutput, record_agent_run
@@ -46,7 +47,16 @@ class PRWriterAgent:
     def __init__(self, llm=None):
         self.llm = llm
 
+    @observe(name="agent.pr_writer", capture_input=False, capture_output=False)
     def run(self, input: PRWriterInput, report: ExecutionReport) -> PRWriterOutput:
+        langfuse_context.update_current_observation(
+            input={
+                "task_id": input.task_id,
+                "changed_files": input.changed_files,
+                "test_status": input.test_status,
+                "retries": input.retries,
+            },
+        )
         started = time.monotonic()
 
         branch_name = self._make_branch_name(input.task_id, input.title)
@@ -69,6 +79,9 @@ class PRWriterAgent:
             output_summary=f"branch={branch_name} title={pr_title[:200]}",
         )
         log.info("pr_writer.completed", branch=branch_name, title=pr_title)
+        langfuse_context.update_current_observation(
+            output={"branch_name": branch_name, "pr_title": pr_title},
+        )
         return output
 
     @staticmethod

@@ -7,6 +7,7 @@ import time
 
 import structlog
 
+from apps.pipeline.observability import langfuse_context, observe
 from apps.tasks.models import ExecutionReport
 
 from .base import AgentInput, AgentOutput, record_agent_run
@@ -34,7 +35,11 @@ class TaskParserAgent:
     def __init__(self, llm=None):
         self.llm = llm  # reserved for Day 3 LLM fallback
 
+    @observe(name="agent.task_parser", capture_input=False, capture_output=False)
     def run(self, input: TaskParserInput, report: ExecutionReport) -> TaskParserOutput:
+        langfuse_context.update_current_observation(
+            input={"raw_task_id": input.raw_task_id, "title": input.raw_title},
+        )
         started = time.monotonic()
         parsed = self._regex_parse(input.raw_description)
         if not parsed:
@@ -67,6 +72,13 @@ class TaskParserAgent:
             repo=output.repository_url,
             branch=output.base_branch,
             ac_count=len(output.acceptance_criteria),
+        )
+        langfuse_context.update_current_observation(
+            output={
+                "repository_url": output.repository_url,
+                "base_branch": output.base_branch,
+                "acceptance_criteria_count": len(output.acceptance_criteria),
+            },
         )
         return output
 

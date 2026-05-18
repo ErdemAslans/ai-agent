@@ -77,6 +77,8 @@ The stack contains five containers:
 - `ai_agent_django` — REST API + Admin
 - `ai_agent_worker` — Celery worker running the orchestrator pipeline
 - `ai_agent_flower` — Celery monitoring UI at http://localhost:5555
+- `ai_agent_langfuse` — per-agent trace tree (prompt, response, tokens, cost) at http://localhost:3000
+- `ai_agent_langfuse_postgres` — Langfuse's own datastore (isolated from the Django DB)
 
 ## 5. Environment Variables
 
@@ -179,6 +181,37 @@ runtime, retries, and per-step timing. The dev compose runs it without
 authentication for ease of demo. For anything but localhost, put an
 nginx reverse proxy with basic auth in front, or pass
 `FLOWER_BASIC_AUTH=user:password` to the Flower container.
+
+### Trace agents end-to-end (Langfuse)
+
+```
+http://localhost:3000/
+```
+
+Langfuse renders each task as a span tree — one root trace per
+`orchestrate` call, child spans for each agent (TaskParser →
+RepoAnalyzer → CodeWriter → TestFixer → PRWriter) and a `generation`
+span for every Gemini call with the **full prompt, full response,
+prompt/completion tokens, and per-call cost**. First-run setup: open
+`http://localhost:3000`, sign up, create an organization + project,
+generate API keys under *Settings → API Keys*, and paste them into
+`.env`:
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=http://langfuse:3000
+```
+
+Then rebuild and recreate the app containers so the SDK picks up the
+keys:
+
+```bash
+docker compose up -d --force-recreate django worker
+```
+
+If the keys are missing the SDK is a no-op — the pipeline keeps
+working, you just lose the trace tree.
 
 ## 7. Sample Task Payload
 

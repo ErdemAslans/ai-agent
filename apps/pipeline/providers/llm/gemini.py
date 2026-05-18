@@ -6,6 +6,8 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ClientError, ServerError
 
+from apps.pipeline.observability import langfuse_context, observe
+
 from .base import LLMResponse, LLMUsage
 
 log = structlog.get_logger(__name__)
@@ -31,6 +33,10 @@ class GeminiProvider:
             raise ValueError("GEMINI_API_KEY is empty — set it in .env")
         self.client = genai.Client(api_key=api_key)
 
+    @observe(
+        name="gemini.generate", as_type="generation",
+        capture_input=False, capture_output=False,
+    )
     def generate(
         self,
         prompt: str,
@@ -41,6 +47,15 @@ class GeminiProvider:
         json_mode: bool = False,
         response_schema: object | None = None,
     ) -> LLMResponse:
+        langfuse_context.update_current_observation(
+            input=({"system": system, "user": prompt} if system else prompt),
+            model=model,
+            model_parameters={
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "json_mode": json_mode,
+            },
+        )
         log.info(
             "llm.generate.started",
             provider=self.name,
@@ -114,6 +129,18 @@ class GeminiProvider:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=round(cost, 6),
+        )
+
+        langfuse_context.update_current_observation(
+            output=text,
+            usage={
+                "input": prompt_tokens,
+                "output": completion_tokens,
+                "unit": "TOKENS",
+                "input_cost": prompt_tokens * PRICING.get(model, {}).get("input", 0) / 1_000_000,
+                "output_cost": completion_tokens * PRICING.get(model, {}).get("output", 0) / 1_000_000,
+                "total_cost": cost,
+            },
         )
 
         return LLMResponse(

@@ -11,6 +11,7 @@ from pathlib import Path
 import structlog
 from pydantic import BaseModel
 
+from apps.pipeline.observability import langfuse_context, observe
 from apps.tasks.models import ExecutionReport
 from apps.pipeline.providers.llm.base import LLMProvider
 
@@ -83,7 +84,17 @@ class CodeWriterAgent:
         self.llm = llm
         self.model = model
 
+    @observe(name="agent.code_writer", capture_input=False, capture_output=False)
     def run(self, input: CodeWriterInput, report: ExecutionReport) -> CodeWriterOutput:
+        langfuse_context.update_current_observation(
+            input={
+                "requirement": input.requirement[:500],
+                "acceptance_criteria": input.acceptance_criteria,
+                "relevant_files": input.relevant_files,
+                "language": input.language,
+                "framework": input.framework,
+            },
+        )
         started = time.monotonic()
         workspace = Path(input.workspace_path)
 
@@ -166,6 +177,15 @@ class CodeWriterAgent:
                 "CodeWriterAgent produced no valid file changes "
                 f"(rejected: {rejected})"
             )
+        langfuse_context.update_current_observation(
+            output={
+                "summary": output.summary,
+                "files_applied": [f.path for f in output.files],
+                "files_rejected": rejected,
+                "tokens": response.usage.prompt_tokens + response.usage.completion_tokens,
+                "cost_usd": float(response.usage.estimated_cost_usd),
+            },
+        )
         return output
 
     def _build_prompt(self, workspace: Path, input: CodeWriterInput) -> str:

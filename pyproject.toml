@@ -17,6 +17,7 @@ dependencies = [
     "structlog>=24.0",
     "pydantic>=2.5",
     "gunicorn>=22.0,<23.0",
+    "langfuse>=2.50,<3.0",
 ]
 
 [project.optional-dependencies]

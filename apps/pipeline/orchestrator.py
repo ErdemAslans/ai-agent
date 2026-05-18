@@ -30,6 +30,7 @@ from .agents.pr_writer import PRWriterAgent, PRWriterInput
 from .agents.repo_analyzer import RepoAnalyzerAgent, RepoAnalyzerInput
 from .agents.task_parser import TaskParserAgent, TaskParserInput
 from .agents.test_fixer import TestFixerAgent, TestFixerInput
+from .observability import langfuse_context, observe
 from .providers.git.github import GitHubProvider
 from .providers.llm.gemini import GeminiProvider
 from .validators.ai_self_review import AISelfReviewer
@@ -125,9 +126,22 @@ def _fail(task: Task, report: ExecutionReport, error: str) -> None:
 
 
 @shared_task(bind=True, name="apps.pipeline.orchestrator.orchestrate")
+@observe(name="orchestrate", capture_input=False, capture_output=False)
 def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
     task = Task.objects.get(id=task_uuid)
     report = ExecutionReport.objects.get(trace_id=trace_id)
+
+    langfuse_context.update_current_trace(
+        name=f"task:{task.task_id}",
+        session_id=trace_id,
+        metadata={
+            "task_id": task.task_id,
+            "trace_id": trace_id,
+            "title": task.title,
+            "source": task.source,
+        },
+        tags=["ai-agent", task.source],
+    )
 
     log.info("orchestrator.start", task_id=task.task_id, trace_id=trace_id)
     task.status = Task.Status.RUNNING

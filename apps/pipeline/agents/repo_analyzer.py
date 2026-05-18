@@ -8,6 +8,7 @@ from pathlib import Path
 
 import structlog
 
+from apps.pipeline.observability import langfuse_context, observe
 from apps.tasks.models import ExecutionReport
 
 from .base import AgentInput, AgentOutput, record_agent_run
@@ -45,7 +46,11 @@ class RepoAnalyzerAgent:
     def __init__(self, llm=None):
         self.llm = llm
 
+    @observe(name="agent.repo_analyzer", capture_input=False, capture_output=False)
     def run(self, input: RepoAnalyzerInput, report: ExecutionReport) -> RepoAnalyzerOutput:
+        langfuse_context.update_current_observation(
+            input={"workspace": input.workspace_path, "requirement": input.requirement[:300]},
+        )
         started = time.monotonic()
         workspace = Path(input.workspace_path)
 
@@ -73,6 +78,14 @@ class RepoAnalyzerAgent:
             language=output.language,
             framework=output.framework,
             relevant_count=len(output.relevant_files),
+        )
+        langfuse_context.update_current_observation(
+            output={
+                "language": output.language,
+                "framework": output.framework,
+                "test_command": output.test_command,
+                "relevant_files": output.relevant_files,
+            },
         )
         return output
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import structlog
 from pydantic import BaseModel
 
+from apps.pipeline.observability import langfuse_context, observe
 from apps.pipeline.providers.llm.base import LLMProvider
 from apps.tasks.models import ExecutionReport
 
@@ -78,7 +79,15 @@ class TestFixerAgent:
         self.llm = llm
         self.model = model
 
+    @observe(name="agent.test_fixer", capture_input=False, capture_output=False)
     def run(self, input: TestFixerInput, report: ExecutionReport) -> TestFixerOutput:
+        langfuse_context.update_current_observation(
+            input={
+                "test_output_chars": len(input.test_output),
+                "last_changed_files": input.last_changed_files,
+                "requirement": input.requirement[:200],
+            },
+        )
         started = time.monotonic()
         workspace = Path(input.workspace_path)
 
@@ -141,6 +150,15 @@ class TestFixerAgent:
             "test_fixer.completed",
             applied=len(applied),
             rejected=len(rejected),
+        )
+        langfuse_context.update_current_observation(
+            output={
+                "summary": output.summary,
+                "files_applied": [f.path for f in output.files],
+                "files_rejected": rejected,
+                "tokens": response.usage.prompt_tokens + response.usage.completion_tokens,
+                "cost_usd": float(response.usage.estimated_cost_usd),
+            },
         )
         return output
 

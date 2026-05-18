@@ -58,6 +58,9 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       WORKSPACE_ROOT: /workspaces
       REPOSITORY_ALLOWLIST: ${REPOSITORY_ALLOWLIST:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
     volumes:
       - .:/app
       - workspaces:/workspaces
@@ -92,6 +95,9 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       WORKSPACE_ROOT: /workspaces
       REPOSITORY_ALLOWLIST: ${REPOSITORY_ALLOWLIST:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
     volumes:
       - .:/app
       - workspaces:/workspaces
@@ -123,6 +129,46 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ---- Langfuse: per-agent trace tree (input/output, tokens, cost) ----
+  # Self-hosted v2 — one app container plus its own Postgres (kept separate
+  # from the Django DB so neither schema can collide with the other).
+  langfuse_postgres:
+    image: postgres:15-alpine
+    container_name: ai_agent_langfuse_postgres
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse_dev_password
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: ai_agent_langfuse
+    depends_on:
+      langfuse_postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse_dev_password@langfuse_postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
+      # NEXTAUTH_SECRET and SALT must be unique random strings in production.
+      # Generate fresh ones with: openssl rand -base64 32
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-dev-only-nextauth-secret-replace-me}
+      SALT: ${LANGFUSE_SALT:-dev-only-salt-replace-me}
+      TELEMETRY_ENABLED: "false"
+      # Allow signing up the first admin user via the web UI.
+      AUTH_DISABLE_SIGNUP: "false"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   workspaces:
+  langfuse_postgres_data:
