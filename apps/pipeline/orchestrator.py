@@ -14,7 +14,7 @@ Pipeline (Day 3):
  11.  Update ExecutionReport
 """
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone as dt_timezone
 from pathlib import Path
 
 import fnmatch
@@ -102,7 +102,7 @@ def _append_timeline(report: ExecutionReport, step: str, duration_ms: int,
     report.refresh_from_db()
     report.timeline.append({
         "step": step,
-        "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "at": datetime.now(dt_timezone.utc).isoformat().replace("+00:00", "Z"),
         "duration_ms": duration_ms,
         "status": status,
     })
@@ -278,16 +278,30 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
                 output_chars=len(failing_output),
             )
 
-            TestFixerAgent(llm=llm).run(
-                TestFixerInput(
-                    workspace_path=str(workspace_path),
-                    test_output=failing_output,
-                    last_changed_files=[f.path for f in code_out.files],
-                    allowlist=analysis.relevant_files,
-                    requirement=parsed.requirement,
-                ),
-                report=report,
-            )
+            try:
+                TestFixerAgent(llm=llm).run(
+                    TestFixerInput(
+                        workspace_path=str(workspace_path),
+                        test_output=failing_output,
+                        last_changed_files=[f.path for f in code_out.files],
+                        allowlist=analysis.relevant_files,
+                        requirement=parsed.requirement,
+                    ),
+                    report=report,
+                )
+            except (ValueError, RuntimeError) as exc:
+                # TestFixer couldn't produce a usable patch (LLM gave bad JSON,
+                # rejected every file path, etc.). The workspace is unchanged,
+                # so re-running tests would yield the same result. Stop retrying
+                # and proceed with the existing failing test_result — the PR
+                # will open with the tests-failed marker per Section 4.6.
+                log.warning(
+                    "test_fixer.attempt_failed",
+                    attempt=retries + 1,
+                    error=str(exc),
+                    note="Skipping further retries; opening PR with tests-failed flag",
+                )
+                break
 
             # Refresh diff after the fix and re-run tests.
             # changed_files stays the same — TestFixer enforces the same allowlist.

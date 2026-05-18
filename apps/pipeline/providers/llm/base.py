@@ -29,4 +29,6 @@ class LLMProvider(Protocol):
         system: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        json_mode: bool = False,
+        response_schema: object | None = None,
     ) -> LLMResponse: ...

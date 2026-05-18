@@ -9,11 +9,23 @@ import time
 from pathlib import Path
 
 import structlog
+from pydantic import BaseModel
 
 from apps.tasks.models import ExecutionReport
 from apps.pipeline.providers.llm.base import LLMProvider
 
 from .base import AgentInput, AgentOutput, record_agent_run
+
+
+# Schema passed to Gemini so the response is structurally guaranteed.
+class _LLMFileChange(BaseModel):
+    path: str
+    content: str
+
+
+class _CodeWriterResponseSchema(BaseModel):
+    files: list[_LLMFileChange]
+    summary: str
 
 log = structlog.get_logger(__name__)
 
@@ -83,6 +95,8 @@ class CodeWriterAgent:
             system=SYSTEM_PROMPT,
             temperature=0.0,
             max_tokens=8192,
+            json_mode=True,
+            response_schema=_CodeWriterResponseSchema,
         )
 
         try:
@@ -201,9 +215,12 @@ Apply the minimum changes to meet the acceptance criteria. Output JSON per the s
 def _extract_json(text: str) -> dict:
     """Find first JSON object in LLM output (handles ```json fences)."""
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if fence:
-        return json.loads(fence.group(1))
-    obj = re.search(r"\{.*\}", text, re.DOTALL)
-    if not obj:
-        raise ValueError(f"No JSON object found in LLM output: {text[:200]!r}")
-    return json.loads(obj.group(0))
+    json_str = fence.group(1) if fence else None
+    if json_str is None:
+        obj = re.search(r"\{.*\}", text, re.DOTALL)
+        if not obj:
+            raise ValueError(f"No JSON object found in LLM output: {text[:200]!r}")
+        json_str = obj.group(0)
+    # strict=False tolerates literal control chars inside string values
+    # (Gemini occasionally emits raw newlines inside JSON string fields).
+    return json.loads(json_str, strict=False)

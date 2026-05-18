@@ -107,6 +107,9 @@ services:
     container_name: ai_agent_flower
     # No auth in dev — for production add an nginx reverse proxy with basic
     # auth in front, or set FLOWER_BASIC_AUTH=user:password (mher/flower env).
+    environment:
+      # Required by Flower 2.0+ for the JSON API to answer without auth.
+      FLOWER_UNAUTHENTICATED_API: "true"
     command:
       - celery
       - --broker=redis://redis:6379/1

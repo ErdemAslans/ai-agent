@@ -8,11 +8,22 @@ import time
 from pathlib import Path
 
 import structlog
+from pydantic import BaseModel
 
 from apps.pipeline.providers.llm.base import LLMProvider
 from apps.tasks.models import ExecutionReport
 
 from .base import AgentInput, AgentOutput, record_agent_run
+
+
+class _LLMFileChange(BaseModel):
+    path: str
+    content: str
+
+
+class _TestFixerResponseSchema(BaseModel):
+    files: list[_LLMFileChange]
+    summary: str
 
 log = structlog.get_logger(__name__)
 
@@ -36,12 +47,15 @@ OUTPUT FORMAT — strict JSON only, no markdown fences, no preamble:
 
 def _extract_json(text: str) -> dict:
     fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
-    if fence:
-        return json.loads(fence.group(1))
-    obj = re.search(r"\{[\s\S]*\}", text)
-    if not obj:
-        raise ValueError(f"No JSON in test_fixer output: {text[:200]!r}")
-    return json.loads(obj.group(0))
+    json_str = fence.group(1) if fence else None
+    if json_str is None:
+        obj = re.search(r"\{[\s\S]*\}", text)
+        if not obj:
+            raise ValueError(f"No JSON in test_fixer output: {text[:200]!r}")
+        json_str = obj.group(0)
+    # strict=False tolerates literal control chars inside string values
+    # (Gemini occasionally emits raw newlines inside JSON string fields).
+    return json.loads(json_str, strict=False)
 
 
 class TestFixerInput(AgentInput):
@@ -75,6 +89,8 @@ class TestFixerAgent:
             system=SYSTEM_PROMPT,
             temperature=0.0,
             max_tokens=8192,
+            json_mode=True,
+            response_schema=_TestFixerResponseSchema,
         )
 
         try:

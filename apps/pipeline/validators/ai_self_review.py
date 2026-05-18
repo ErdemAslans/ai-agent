@@ -9,8 +9,20 @@ import time
 from typing import Any
 
 import structlog
+from pydantic import BaseModel
 
 from .base import Severity, ValidationContext, ValidationIssue, ValidationResult
+
+
+class _CriterionEvaluation(BaseModel):
+    text: str
+    met: bool
+    evidence: str = ""
+    reasoning: str = ""
+
+
+class _SelfReviewSchema(BaseModel):
+    criteria: list[_CriterionEvaluation]
 
 log = structlog.get_logger(__name__)
 
@@ -37,12 +49,13 @@ Rules:
 
 def _extract_json(text: str) -> dict[str, Any]:
     fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
-    if fence:
-        return json.loads(fence.group(1))
-    obj = re.search(r"\{[\s\S]*\}", text)
-    if not obj:
-        raise ValueError(f"No JSON in self-review output: {text[:200]!r}")
-    return json.loads(obj.group(0))
+    json_str = fence.group(1) if fence else None
+    if json_str is None:
+        obj = re.search(r"\{[\s\S]*\}", text)
+        if not obj:
+            raise ValueError(f"No JSON in self-review output: {text[:200]!r}")
+        json_str = obj.group(0)
+    return json.loads(json_str, strict=False)
 
 
 class AISelfReviewer:
@@ -83,6 +96,8 @@ class AISelfReviewer:
             system=SYSTEM_PROMPT,
             temperature=0.0,
             max_tokens=2048,
+            json_mode=True,
+            response_schema=_SelfReviewSchema,
         )
 
         try:
