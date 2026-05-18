@@ -1,0 +1,13 @@
+{
+  "webhookEvent": "jira:issue_created",
+  "timestamp": 1715900000000,
+  "issue": {
+    "key": "TASK-200",
+    "fields": {
+      "summary": "Add email validation to user registration API",
+      "description": "Repository: https://github.com/ErdemAslans/user-service-test\nBranch: develop\n\nRequirement:\nUser registration endpoint currently accepts invalid email formats. Add email format validation to the POST /users/register endpoint.\n\nAcceptance Criteria:\n- If email format is invalid, API should return HTTP 400\n- Error message should be: Invalid email format\n- Existing valid registration flow should continue working\n- Add or update unit tests",
+      "labels": ["ai-agent", "backend"],
+      "priority": {"name": "High"}
+    }
+  }
+}
