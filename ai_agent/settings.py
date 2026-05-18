@@ -99,6 +99,24 @@ GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
 GITHUB_TOKEN = env("GITHUB_TOKEN", default="")
 WORKSPACE_ROOT = env("WORKSPACE_ROOT", default="/workspaces")
 
+# ---- Test runner selection ----
+# "subprocess" (default) runs tests in the worker container.
+# "docker"    spawns an isolated Docker container per run (network=none).
+#             Requires /var/run/docker.sock mounted in the worker.
+TEST_RUNNER_MODE = env("TEST_RUNNER_MODE", default="subprocess")
+
+# ---- Multi-repo PAT map ----
+# Optional per-owner GitHub token overrides. Format:
+#   "owner1:ghp_token1,owner2:ghp_token2"
+# Falls back to GITHUB_TOKEN if not specified.
+_GITHUB_TOKEN_MAP_RAW = env("GITHUB_TOKEN_MAP", default="")
+GITHUB_TOKEN_MAP: dict[str, str] = {}
+for _entry in _GITHUB_TOKEN_MAP_RAW.split(","):
+    if ":" not in _entry:
+        continue
+    _owner, _token = _entry.split(":", 1)
+    GITHUB_TOKEN_MAP[_owner.strip()] = _token.strip()
+
 # ---- Security: Repository policy ----
 REPOSITORY_ALLOWLIST = env.list("REPOSITORY_ALLOWLIST", default=[])
 

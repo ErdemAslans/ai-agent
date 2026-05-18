@@ -70,6 +70,7 @@ class ExecutionReport(models.Model):
     diff = models.TextField(null=True, blank=True)
     pr_url = models.URLField(null=True, blank=True)
     branch_name = models.CharField(max_length=200, null=True, blank=True)
+    workspace_path = models.CharField(max_length=500, null=True, blank=True)
 
     error = models.TextField(null=True, blank=True)
 

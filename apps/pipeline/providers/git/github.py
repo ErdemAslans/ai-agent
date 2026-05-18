@@ -14,16 +14,37 @@ log = structlog.get_logger(__name__)
 class GitHubProvider:
     name = "github"
 
-    def __init__(self, token: str):
-        if not token:
+    def __init__(self, token: str, token_map: dict[str, str] | None = None):
+        """Default token plus optional per-owner overrides.
+
+        When pushing to or opening PRs against ``owner/repo``, if
+        ``token_map[owner]`` exists it is used instead of the default token.
+        """
+        if not token and not token_map:
             raise ValueError("GITHUB_TOKEN is empty — set it in .env")
         self.token = token
-        self.api = Github(token)
+        self.token_map = token_map or {}
+        # The PyGithub client uses the default token; per-owner calls
+        # rebuild a client per call when needed.
+        self.api = Github(token) if token else None
+
+    def _token_for(self, repo_url: str) -> str:
+        try:
+            owner = self._extract_owner_repo(repo_url).split("/")[0]
+        except ValueError:
+            return self.token
+        return self.token_map.get(owner, self.token)
+
+    def _api_for(self, repo_url: str) -> Github:
+        token = self._token_for(repo_url)
+        if token == self.token and self.api is not None:
+            return self.api
+        return Github(token)
 
     # ---- Local git operations ----
 
     def clone(self, repo_url: str, branch: str, dest: Path) -> Path:
-        auth_url = self._with_token(repo_url)
+        auth_url = self._with_token(repo_url, self._token_for(repo_url))
         log.info("git.clone.started", repo_url=repo_url, branch=branch, dest=str(dest))
         try:
             GitRepo.clone_from(auth_url, str(dest), branch=branch, depth=1)
@@ -69,7 +90,7 @@ class GitHubProvider:
         origin = repo.remote("origin")
         current_url = next(iter(origin.urls), None)
         if current_url:
-            origin.set_url(self._with_token(current_url))
+            origin.set_url(self._with_token(current_url, self._token_for(current_url)))
 
         push_results = origin.push(refspec=f"{branch_name}:{branch_name}")
         needs_force = False
@@ -123,7 +144,7 @@ class GitHubProvider:
         from github import GithubException
 
         owner_repo = self._extract_owner_repo(repo_url)
-        repo = self.api.get_repo(owner_repo)
+        repo = self._api_for(repo_url).get_repo(owner_repo)
         try:
             pr = repo.create_pull(title=title, body=body, head=head_branch, base=base_branch)
             log.info("git.pr.opened", url=pr.html_url, number=pr.number, repo=owner_repo)
@@ -151,12 +172,13 @@ class GitHubProvider:
 
     # ---- Helpers ----
 
-    def _with_token(self, repo_url: str) -> str:
+    def _with_token(self, repo_url: str, token: str | None = None) -> str:
+        token = token or self.token
         if "x-access-token:" in repo_url:
             return repo_url
         if repo_url.startswith("https://"):
             return repo_url.replace(
-                "https://", f"https://x-access-token:{self.token}@", 1
+                "https://", f"https://x-access-token:{token}@", 1
             )
         return repo_url
 

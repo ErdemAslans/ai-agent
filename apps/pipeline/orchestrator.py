@@ -41,6 +41,28 @@ from .validators.pipeline import ValidationPipeline, summarize
 from .validators.secret_scanner import SecretScanner
 from .validators.syntax import SyntaxValidator
 from .validators.test_runner import TestRunner
+
+
+def _build_test_runner():
+    """Pick TestRunner implementation based on settings.
+
+    "subprocess" — runs pytest in the worker container (default, fast, no extra setup).
+    "docker"     — spawns an ephemeral Docker container (network=none, mem-limited).
+    """
+    mode = (settings.TEST_RUNNER_MODE or "subprocess").lower()
+    if mode == "docker":
+        try:
+            from .validators.docker_test_runner import DockerSandboxTestRunner
+            log.info("test_runner.mode", mode="docker")
+            return DockerSandboxTestRunner()
+        except Exception as exc:
+            log.warning(
+                "test_runner.docker_unavailable",
+                error=str(exc),
+                fallback="subprocess",
+            )
+    log.info("test_runner.mode", mode="subprocess")
+    return TestRunner()
 from .workspace import WorkspaceManager
 
 log = structlog.get_logger(__name__)
@@ -115,7 +137,10 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
 
     try:
         llm = GeminiProvider(api_key=settings.GEMINI_API_KEY)
-        git = GitHubProvider(token=settings.GITHUB_TOKEN)
+        git = GitHubProvider(
+            token=settings.GITHUB_TOKEN,
+            token_map=settings.GITHUB_TOKEN_MAP,
+        )
         workspace_mgr = WorkspaceManager()
     except ValueError as exc:
         log.error("orchestrator.config_missing", error=str(exc))
@@ -130,7 +155,7 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
             ForbiddenPatternValidator(),
             DiffSizeValidator(),
         ],
-        test_runner=TestRunner(),
+        test_runner=_build_test_runner(),
         ai_reviewer=AISelfReviewer(llm=llm),
     )
 
@@ -161,6 +186,8 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
         # ---- 3. Workspace + clone ----
         t0 = time.monotonic()
         workspace_path = workspace_mgr.create(task.task_id, trace_id)
+        report.workspace_path = str(workspace_path)
+        report.save(update_fields=["workspace_path"])
         _append_timeline(report, "workspace_created", int((time.monotonic() - t0) * 1000))
 
         t0 = time.monotonic()
