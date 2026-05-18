@@ -14,7 +14,7 @@ Pipeline (Day 3):
  11.  Update ExecutionReport
 """
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import fnmatch
@@ -102,7 +102,7 @@ def _append_timeline(report: ExecutionReport, step: str, duration_ms: int,
     report.refresh_from_db()
     report.timeline.append({
         "step": step,
-        "at": datetime.utcnow().isoformat() + "Z",
+        "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "duration_ms": duration_ms,
         "status": status,
     })

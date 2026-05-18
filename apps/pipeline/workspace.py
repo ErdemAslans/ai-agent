@@ -1,7 +1,7 @@
 """WorkspaceManager — per-task isolated directories on shared volume."""
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -22,7 +22,7 @@ class WorkspaceManager:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def create(self, task_id: str, trace_id: str) -> Path:
-        ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
         safe_task = "".join(c if c.isalnum() or c in "-_." else "_" for c in task_id)
         path = self.root / f"{safe_task}_{ts}_{trace_id[:8]}"
         path.mkdir(mode=0o700, parents=True, exist_ok=False)
