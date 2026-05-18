@@ -70,12 +70,13 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-The stack contains four containers:
+The stack contains five containers:
 
 - `ai_agent_postgres` — durable task store
 - `ai_agent_redis` — Celery broker / result backend
 - `ai_agent_django` — REST API + Admin
 - `ai_agent_worker` — Celery worker running the orchestrator pipeline
+- `ai_agent_flower` — Celery monitoring UI at http://localhost:5555
 
 ## 5. Environment Variables
 
@@ -149,6 +150,18 @@ docker compose exec django python manage.py createsuperuser   # first time
 The Admin lists every `Task`, `ExecutionReport`, and `AgentRun`. A
 custom action on `ExecutionReport` rows in the `DRY_RUN_COMPLETE` state
 opens the PR — that is the **human approval** flow.
+
+### Monitor Celery tasks (Flower)
+
+```
+http://localhost:5555/
+```
+
+Flower shows live worker state, queue depth, every orchestrate task's
+runtime, retries, and per-step timing. The dev compose runs it without
+authentication for ease of demo. For anything but localhost, put an
+nginx reverse proxy with basic auth in front, or pass
+`FLOWER_BASIC_AUTH=user:password` to the Flower container.
 
 ## 7. Sample Task Payload
 
