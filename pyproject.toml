@@ -38,3 +38,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "ai_agent.settings"
 python_files = ["test_*.py", "*_test.py", "tests.py"]
+testpaths = ["apps"]
+norecursedirs = ["test-repo-bootstrap", ".git", "node_modules", "*.egg-info", "build", "dist", "workspaces"]
+filterwarnings = ["ignore::pytest.PytestCollectionWarning"]

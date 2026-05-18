@@ -29,7 +29,9 @@ RUN pip install --upgrade pip && \
     "docker>=7.0" \
     "structlog>=24.0" \
     "pydantic>=2.5" \
-    "gunicorn>=22.0,<23.0"
+    "gunicorn>=22.0,<23.0" \
+    "pytest>=7.4" \
+    "pytest-django>=4.7"
 
 # ===== Stage 2: Runtime =====
 FROM python:3.12-slim
