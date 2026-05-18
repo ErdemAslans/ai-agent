@@ -168,6 +168,27 @@ services:
       - "3000:3000"
     restart: unless-stopped
 
+  # ---- ngrok: public HTTPS tunnel to the Django webhook endpoint ----
+  # Opt-in only. Start with: docker compose --profile webhook up -d ngrok
+  # Then open http://localhost:4040 to see the assigned public URL — paste
+  # <url>/api/webhooks/jira (or /trello, /github) into the upstream system.
+  # Free tier requires a personal authtoken from https://dashboard.ngrok.com.
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ai_agent_ngrok
+    profiles: ["webhook"]
+    command:
+      - http
+      - django:8000
+      - --log=stdout
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    ports:
+      - "4040:4040"   # ngrok inspector — public URL shown here
+    depends_on:
+      - django
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   workspaces:

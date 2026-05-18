@@ -79,6 +79,7 @@ The stack contains five containers:
 - `ai_agent_flower` — Celery monitoring UI at http://localhost:5555
 - `ai_agent_langfuse` — per-agent trace tree (prompt, response, tokens, cost) at http://localhost:3000
 - `ai_agent_langfuse_postgres` — Langfuse's own datastore (isolated from the Django DB)
+- `ai_agent_ngrok` *(optional, profile `webhook`)* — public HTTPS tunnel for real Jira/Trello/GitHub webhooks; inspector at http://localhost:4040
 
 ## 5. Environment Variables
 
@@ -132,9 +133,69 @@ curl -X POST http://localhost:8000/api/webhooks/github  -d @examples/github_issu
 ```
 
 > Webhook endpoints accept the *exact* payload format that real Jira/Trello/GitHub
-> send. To wire up real webhooks: expose `localhost:8000` (e.g. with ngrok),
-> register the URL in the source system, set the matching `*_WEBHOOK_SECRET`,
-> and add the label `ai-agent` to issues you want the agent to pick up.
+> send. To wire up real webhooks: expose `localhost:8000` (see "Expose webhooks
+> with ngrok" below), register the URL in the source system, set the matching
+> `*_WEBHOOK_SECRET`, and add the label `ai-agent` to issues you want the agent to pick up.
+
+### Expose webhooks with ngrok (real Jira / Trello / GitHub end-to-end)
+
+The compose file ships an opt-in `ngrok` service that opens a public HTTPS
+tunnel to the Django container. Start it on demand with the `webhook`
+profile (so default `docker compose up` stays lean):
+
+1. Sign up at [ngrok.com](https://ngrok.com) and copy your authtoken from
+   [dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken).
+2. Paste it into `.env`:
+   ```env
+   NGROK_AUTHTOKEN=2abc...
+   ```
+3. Start the tunnel:
+   ```bash
+   docker compose --profile webhook up -d ngrok
+   ```
+4. Open the ngrok inspector and copy the public URL:
+   ```
+   http://localhost:4040
+   ```
+   You will see something like `https://abcd-12-34-56-78.ngrok-free.app`.
+
+Use that hostname plus `/api/webhooks/jira` (or `/trello`, `/github`)
+when registering the webhook in the upstream system.
+
+#### Wire up a real Jira project
+
+In Jira: **Settings → System → Automation → Create rule**
+
+| Step | Setting |
+|------|---------|
+| **Trigger** | Issue created |
+| **Condition** | Label equals `ai-agent` |
+| **Action** | Send web request |
+| **URL** | `https://<your-ngrok>.ngrok-free.app/api/webhooks/jira` |
+| **HTTP method** | `POST` |
+| **Headers** | `Content-Type: application/json` |
+| **Body** | (smart values shown below) |
+
+Body template — Jira fills in the `{{...}}` placeholders at runtime:
+
+```json
+{
+  "issue": {
+    "key": "{{issue.key}}",
+    "fields": {
+      "summary": "{{issue.summary}}",
+      "description": "{{issue.description}}",
+      "labels": {{issue.labels.asJsonArray}}
+    }
+  },
+  "webhookEvent": "jira:issue_created"
+}
+```
+
+Save the rule, create an issue with label `ai-agent` whose description
+follows the *Sample Task Payload* format below, and the orchestrator
+will dispatch a worker the same instant Jira fires the rule — no
+polling.
 
 ### Poll the execution report
 
