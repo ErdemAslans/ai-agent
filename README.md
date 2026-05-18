@@ -140,6 +140,23 @@ curl -X POST http://localhost:8000/api/webhooks/github  -d @examples/github_issu
 curl http://localhost:8000/api/tasks/<traceId>/report
 ```
 
+### Pretty-print the execution report (human-readable summary)
+
+```bash
+docker compose exec django python manage.py report TASK-123
+docker compose exec django python manage.py report <traceId>          # also works
+docker compose exec django python manage.py report TASK-123 --no-timeline
+```
+
+Renders a single-screen breakdown of the run:
+
+* per-agent token / cost / duration (TaskParser → RepoAnalyzer → CodeWriter → TestFixer → PRWriter)
+* every validator's pass/fail with key extras (test status, diff stats, criteria-met ratio)
+* full timeline with seconds-from-start offsets
+* total LLM spend and PR link
+
+The same data is returned as JSON by `GET /api/tasks/<traceId>/report` — this command is just a reviewer-friendly view of it.
+
 ### Open Django Admin
 
 ```
@@ -297,7 +314,7 @@ ai_agent/                       # Django project
 
 apps/tasks/                     # Inbound surface
   ├─ adapters/                  # Jira / Trello / GitHub Issue → NormalizedTask
-  ├─ management/commands/       # CLI: run_task
+  ├─ management/commands/       # CLI: run_task, report
   ├─ views.py                   # REST + webhook endpoints + HMAC helper
   ├─ serializers.py             # camelCase API ↔ snake_case DB
   ├─ models.py                  # Task / ExecutionReport / AgentRun
