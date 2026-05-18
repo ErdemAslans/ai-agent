@@ -44,7 +44,7 @@ services:
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-only-secret-change-me}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,.ngrok-free.app,.ngrok.io,.ngrok.app}
       DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
       POSTGRES_DB: ${POSTGRES_DB:-ai_agent}
       POSTGRES_USER: ${POSTGRES_USER:-ai_agent}
