@@ -46,3 +46,6 @@ data/
 
 # OS
 Thumbs.db
+
+# Internal preparation docs (not for the public repo)
+plans/video-script.md
