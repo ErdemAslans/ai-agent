@@ -1,7 +1,26 @@
 """Jira webhook adapter (simulation-friendly, real-format compatible)."""
 from typing import Any
+from urllib.parse import unquote
 
 from .base import NormalizedTask, SkipTaskException
+
+
+def _decode(value: Any) -> str:
+    """URL-decode a field if it looks encoded; pass through otherwise.
+
+    Jira automation rules typically don't JSON-escape control characters
+    or quotes inside `{{issue.description}}` smart values, which breaks
+    strict JSON parsing on the receiver. The recommended workaround is
+    to pipe the value through `{{...urlEncode}}` in the body template
+    and unquote it here — a no-op for plain fields, a rescue for rich
+    descriptions with newlines and embedded quotes.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if "%" in text:
+        return unquote(text)
+    return text
 
 
 class JiraAdapter:
@@ -15,7 +34,7 @@ class JiraAdapter:
             "key": "TASK-200",
             "fields": {
               "summary": "...",
-              "description": "Repository: ...\\nBranch: ...",
+              "description": "Repository%3A%20...%0ABranch%3A%20...",
               "labels": ["ai-agent"]
             }
           }
@@ -41,8 +60,8 @@ class JiraAdapter:
             )
 
         task_id = issue.get("key")
-        title = fields.get("summary")
-        description = fields.get("description")
+        title = _decode(fields.get("summary"))
+        description = _decode(fields.get("description"))
 
         if not (task_id and title and description):
             raise ValueError(
@@ -51,8 +70,8 @@ class JiraAdapter:
 
         return NormalizedTask(
             task_id=str(task_id),
-            title=str(title),
-            description=str(description),
+            title=title,
+            description=description,
             source_meta={
                 "webhook_event": event,
                 "jira_issue_key": task_id,
