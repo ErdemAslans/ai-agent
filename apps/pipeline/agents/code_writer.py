@@ -49,6 +49,15 @@ Return STRICT JSON, no markdown fence, no explanation:
   "summary": "1-2 sentence description of what changed"
 }
 
+CRITICAL FORMATTING RULES FOR "content":
+- The value MUST be the complete file content as it would be saved to disk.
+- Encode line breaks as literal "\\n" inside the JSON string (Python's str type
+  preserves them). Never concatenate logically separate statements into one line.
+- Preserve original indentation (spaces or tabs) on every line.
+- Preserve original blank lines between top-level definitions.
+- A Python file you return must parse without SyntaxError; if you cannot meet
+  this, return an empty files list and explain in summary.
+
 Every file you list will REPLACE the existing file entirely.
 If you have no changes, return {"files": [], "summary": "..."}.
 """
