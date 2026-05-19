@@ -50,13 +50,17 @@ Return STRICT JSON, no markdown fence, no explanation:
 }
 
 CRITICAL FORMATTING RULES FOR "content":
-- The value MUST be the complete file content as it would be saved to disk.
-- Encode line breaks as literal "\\n" inside the JSON string (Python's str type
-  preserves them). Never concatenate logically separate statements into one line.
+- Write the file inside "content" exactly as it should appear on disk.
+- Use REAL line breaks between statements — your JSON serializer will encode
+  them as \n automatically. Do NOT type a backslash followed by "n" as text;
+  that produces a literal two-character sequence in the saved file.
+- Likewise do NOT type —, \uXXXX, or any other backslash-escape literally;
+  write the actual character (— or whatever it is) and let the serializer
+  handle it.
 - Preserve original indentation (spaces or tabs) on every line.
 - Preserve original blank lines between top-level definitions.
-- A Python file you return must parse without SyntaxError; if you cannot meet
-  this, return an empty files list and explain in summary.
+- A Python file you return MUST parse without SyntaxError; if you cannot meet
+  that, return an empty files list and explain in summary.
 
 Every file you list will REPLACE the existing file entirely.
 If you have no changes, return {"files": [], "summary": "..."}.
