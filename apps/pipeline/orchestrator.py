@@ -22,6 +22,7 @@ import structlog
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
+from google.genai.errors import APIError
 
 from apps.tasks.models import AgentRun, ExecutionReport, Task
 
@@ -303,14 +304,16 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
                     ),
                     report=report,
                 )
-            except Exception as exc:
-                # TestFixer failed to land a usable patch for any reason:
-                # unparseable LLM JSON, rejected paths, or upstream Gemini
-                # 503/429 even after our backoff. Either way the workspace
-                # is unchanged, so re-running tests would yield the same
-                # result. Stop retrying and proceed with the existing failing
-                # test_result — the PR opens with the tests-failed marker
-                # per Section 4.6 instead of crashing the whole pipeline.
+            except (ValueError, RuntimeError, APIError) as exc:
+                # TestFixer couldn't produce a usable patch for one of:
+                # - unparseable LLM JSON / rejected paths (ValueError, RuntimeError)
+                # - upstream LLM 4xx/5xx after our backoff (APIError)
+                # Programming bugs (AttributeError, etc.) are intentionally NOT
+                # swallowed — they should surface so the reviewer sees them.
+                # The workspace is unchanged, so re-running tests would yield
+                # the same result. Stop retrying and proceed with the existing
+                # failing test_result — the PR opens with the tests-failed
+                # marker per Section 4.6.
                 log.warning(
                     "test_fixer.attempt_failed",
                     attempt=retries + 1,
