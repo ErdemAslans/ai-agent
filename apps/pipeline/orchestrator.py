@@ -303,12 +303,14 @@ def orchestrate(self, task_uuid: str, trace_id: str) -> dict:
                     ),
                     report=report,
                 )
-            except (ValueError, RuntimeError) as exc:
-                # TestFixer couldn't produce a usable patch (LLM gave bad JSON,
-                # rejected every file path, etc.). The workspace is unchanged,
-                # so re-running tests would yield the same result. Stop retrying
-                # and proceed with the existing failing test_result — the PR
-                # will open with the tests-failed marker per Section 4.6.
+            except Exception as exc:
+                # TestFixer failed to land a usable patch for any reason:
+                # unparseable LLM JSON, rejected paths, or upstream Gemini
+                # 503/429 even after our backoff. Either way the workspace
+                # is unchanged, so re-running tests would yield the same
+                # result. Stop retrying and proceed with the existing failing
+                # test_result — the PR opens with the tests-failed marker
+                # per Section 4.6 instead of crashing the whole pipeline.
                 log.warning(
                     "test_fixer.attempt_failed",
                     attempt=retries + 1,
