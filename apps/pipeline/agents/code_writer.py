@@ -54,9 +54,9 @@ CRITICAL FORMATTING RULES FOR "content":
 - Use REAL line breaks between statements — your JSON serializer will encode
   them as \n automatically. Do NOT type a backslash followed by "n" as text;
   that produces a literal two-character sequence in the saved file.
-- Likewise do NOT type —, \uXXXX, or any other backslash-escape literally;
-  write the actual character (— or whatever it is) and let the serializer
-  handle it.
+- Likewise do NOT type backslash-u-XXXX or any other backslash escape
+  literally; write the actual character (em-dash, accented letter, etc.)
+  and let the serializer handle it.
 - Preserve original indentation (spaces or tabs) on every line.
 - Preserve original blank lines between top-level definitions.
 - A Python file you return MUST parse without SyntaxError; if you cannot meet
