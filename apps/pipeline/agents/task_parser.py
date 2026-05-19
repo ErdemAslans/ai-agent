@@ -82,8 +82,13 @@ class TaskParserAgent:
         )
         return output
 
+    # Capture a URL even when the upstream system (e.g. Jira) wraps it in
+    # smart-link wiki markup like [https://...|https://...|smart-link].
+    # Stops at the first whitespace, pipe, or closing bracket.
+    _URL_PATTERN = r"\[?(https?://[^\s|\]]+)"
+
     def _regex_parse(self, desc: str) -> dict | None:
-        repo_match = re.search(r"Repository:\s*(\S+)", desc)
+        repo_match = re.search(rf"Repository:\s*{self._URL_PATTERN}", desc)
         branch_match = re.search(r"Branch:\s*(\S+)", desc)
         req_match = re.search(
             r"Requirement:\s*\n?(.+?)(?=\n\s*Acceptance Criteria:|\Z)",
