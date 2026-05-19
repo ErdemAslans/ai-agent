@@ -55,7 +55,15 @@ def _extract_json(text: str) -> dict[str, Any]:
         if not obj:
             raise ValueError(f"No JSON in self-review output: {text[:200]!r}")
         json_str = obj.group(0)
-    return json.loads(json_str, strict=False)
+    try:
+        return json.loads(json_str, strict=False)
+    except json.JSONDecodeError:
+        # Self-review responses are short, but the model can still drop an
+        # escape inside the 'reasoning' or 'evidence' strings. Salvage with
+        # json-repair so the criteria evaluations are not lost.
+        from json_repair import repair_json
+
+        return repair_json(json_str, return_objects=True)
 
 
 class AISelfReviewer:

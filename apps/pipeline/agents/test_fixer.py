@@ -56,7 +56,17 @@ def _extract_json(text: str) -> dict:
         json_str = obj.group(0)
     # strict=False tolerates literal control chars inside string values
     # (Gemini occasionally emits raw newlines inside JSON string fields).
-    return json.loads(json_str, strict=False)
+    try:
+        return json.loads(json_str, strict=False)
+    except json.JSONDecodeError:
+        # Gemini sometimes ships Python source in a 'content' value without
+        # escaping inner double quotes, so the parser thinks the string ends
+        # early. json-repair finds the unbalanced quotes/brackets and patches
+        # them so we keep a usable test-fixer patch instead of dropping the
+        # whole retry on the floor.
+        from json_repair import repair_json
+
+        return repair_json(json_str, return_objects=True)
 
 
 class TestFixerInput(AgentInput):

@@ -256,4 +256,12 @@ def _extract_json(text: str) -> dict:
         json_str = obj.group(0)
     # strict=False tolerates literal control chars inside string values
     # (Gemini occasionally emits raw newlines inside JSON string fields).
-    return json.loads(json_str, strict=False)
+    try:
+        return json.loads(json_str, strict=False)
+    except json.JSONDecodeError:
+        # Gemini sometimes ships Python source in a 'content' value without
+        # escaping inner double quotes. Fall back to json-repair to recover
+        # the patch instead of dropping the whole code-writer attempt.
+        from json_repair import repair_json
+
+        return repair_json(json_str, return_objects=True)
