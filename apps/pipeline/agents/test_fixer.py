@@ -154,7 +154,7 @@ class TestFixerAgent:
         langfuse_context.update_current_observation(
             output={
                 "summary": output.summary,
-                "files_applied": [f.path for f in output.files],
+                "files_applied": output.changed_files,
                 "files_rejected": rejected,
                 "tokens": response.usage.prompt_tokens + response.usage.completion_tokens,
                 "cost_usd": float(response.usage.estimated_cost_usd),
