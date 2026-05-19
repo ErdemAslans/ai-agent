@@ -1,6 +1,6 @@
 """Jira webhook adapter (simulation-friendly, real-format compatible)."""
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote_plus
 
 from .base import NormalizedTask, SkipTaskException
 
@@ -14,12 +14,15 @@ def _decode(value: Any) -> str:
     to pipe the value through `{{...urlEncode}}` in the body template
     and unquote it here — a no-op for plain fields, a rescue for rich
     descriptions with newlines and embedded quotes.
+
+    Uses ``unquote_plus`` (not ``unquote``) so that ``+`` characters
+    Jira inserts in place of spaces also decode correctly.
     """
     if value is None:
         return ""
     text = str(value)
     if "%" in text:
-        return unquote(text)
+        return unquote_plus(text)
     return text
 
 
